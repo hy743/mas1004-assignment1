@@ -50,7 +50,9 @@ def prepare_image(image):
     The web page does these same six steps in JavaScript. If your version is
     different, the self test badge at the top of your page turns red.
     """
-    raise NotImplementedError("Problem 2: fill in prepare_image")
+    from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
+    transform = Compose([Resize(RESIZE), CenterCrop(CROP), ToTensor(), Normalize(MEAN, STD)])
+    return transform(image.convert("RGB")).numpy().astype(np.float32)
 
 
 def load_folder(root):
@@ -83,7 +85,25 @@ def load_folder(root):
     Memory: every image becomes 3 x 224 x 224 numbers of 4 bytes, about 0.6 MB.
     750 images is about 450 MB. That fits on Colab and on most laptops.
     """
-    raise NotImplementedError("Problem 2: fill in load_folder")
+    from pathlib import Path
+    from PIL import Image, UnidentifiedImageError
+    root = Path(root)
+    class_names = sorted(p.name for p in root.iterdir() if p.is_dir())
+    images, labels, paths = [], [], []
+    for label, name in enumerate(class_names):
+        for path in sorted((root / name).iterdir()):
+            if not path.is_file() or path.suffix.lower() not in IMAGE_SUFFIXES:
+                continue
+            try:
+                with Image.open(path) as image:
+                    prepared = prepare_image(image)
+            except (OSError, ValueError, UnidentifiedImageError):
+                continue
+            images.append(prepared)
+            labels.append(label)
+            paths.append(path)
+    X = np.stack(images) if images else np.empty((0, 3, CROP, CROP), dtype=np.float32)
+    return X, np.asarray(labels, dtype=np.int64), class_names, paths
 
 
 def split_train_test(X, y, paths, test_ratio=0.2, seed=0):
@@ -102,4 +122,17 @@ def split_train_test(X, y, paths, test_ratio=0.2, seed=0):
         up with a class that has no test images at all, and then your accuracy
         number means nothing.
     """
-    raise NotImplementedError("Problem 2: fill in split_train_test")
+    if not 0 < test_ratio < 1:
+        raise ValueError("test_ratio must be between 0 and 1")
+    rng = np.random.default_rng(seed)
+    train_indices, test_indices = [], []
+    for label in np.unique(y):
+        indices = rng.permutation(np.flatnonzero(y == label))
+        if len(indices) < 2:
+            raise ValueError("Each class needs at least two images")
+        count = max(1, min(len(indices) - 1, round(len(indices) * test_ratio)))
+        test_indices.extend(indices[:count])
+        train_indices.extend(indices[count:])
+    a = rng.permutation(train_indices).astype(np.int64)
+    b = rng.permutation(test_indices).astype(np.int64)
+    return X[a], y[a], [paths[i] for i in a], X[b], y[b], [paths[i] for i in b]
