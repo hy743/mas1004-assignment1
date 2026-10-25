@@ -35,7 +35,13 @@ def build_model(num_classes, pretrained=True, freeze=False):
     Do not put a softmax at the end. The loss function adds it for you, and the
     web page adds it for you.
     """
-    raise NotImplementedError("Problem 3: fill in build_model")
+    from torchvision.models import resnet18, ResNet18_Weights
+    model = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1 if pretrained else None)
+    if freeze:
+        for parameter in model.parameters():
+            parameter.requires_grad = False
+    model.fc = nn.Linear(model.fc.in_features, num_classes)
+    return model
 
 
 def train(model, X_train, y_train, X_test, y_test,
@@ -78,7 +84,38 @@ def train(model, X_train, y_train, X_test, y_test,
     The model is trained in place. When this function returns, `model` is the
     trained one, and it is left on the device it was trained on.
     """
-    raise NotImplementedError("Problem 3: fill in train")
+    from torch.utils.data import TensorDataset, DataLoader
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    loaders = {
+        "train": DataLoader(TensorDataset(torch.as_tensor(X_train), torch.as_tensor(y_train)), batch_size=batch_size, shuffle=True),
+        "test": DataLoader(TensorDataset(torch.as_tensor(X_test), torch.as_tensor(y_test)), batch_size=batch_size),
+    }
+    optimizer = torch.optim.Adam((p for p in model.parameters() if p.requires_grad), lr=lr)
+    criterion = nn.CrossEntropyLoss()
+    history = {key: [] for key in ("train_loss", "train_acc", "test_loss", "test_acc")}
+    for epoch in range(epochs):
+        for phase, loader in loaders.items():
+            training = phase == "train"
+            model.train(training)
+            total_loss, correct, count = 0.0, 0, 0
+            with torch.set_grad_enabled(training):
+                for inputs, labels in loader:
+                    inputs, labels = inputs.to(device), labels.to(device)
+                    if training:
+                        optimizer.zero_grad()
+                    logits = model(inputs)
+                    loss = criterion(logits, labels)
+                    if training:
+                        loss.backward()
+                        optimizer.step()
+                    total_loss += loss.item() * len(labels)
+                    correct += (logits.argmax(1) == labels).sum().item()
+                    count += len(labels)
+            history[phase + "_loss"].append(total_loss / count)
+            history[phase + "_acc"].append(correct / count)
+        print(f"epoch {epoch + 1}/{epochs}: " + " ".join(f"{key}={values[-1]:.6f}" for key, values in history.items()))
+    return history
 
 
 def count_trainable(model):
